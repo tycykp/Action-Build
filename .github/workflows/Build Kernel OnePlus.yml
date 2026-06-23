@@ -192,16 +192,12 @@ on:
         required: true
         default: false
       BUILD_ALL:
-        type: boolean
-        description: "是否批量构建所有机型？(忽略上方FILE选择)"
-        required: true
-        default: false
-      BUILD_SCOPE:
         type: choice
-        description: "批量构建范围(仅BUILD_ALL=true时生效)"
+        description: "批量构建(Off=单机型/忽略FILE批量构建对应范围机型)"
         required: true
-        default: All
+        default: "Off"
         options:
+          - "Off"
           - All
           - MTK
           - Qualcomm
@@ -293,7 +289,9 @@ jobs:
             oneplus_ace6_ultra_Canary
           )
 
-          BUILD_SCOPE="${{ github.event.inputs.BUILD_SCOPE }}"
+          # BUILD_ALL: Off=单机型；All/MTK/Qualcomm=批量构建对应范围
+          BUILD_ALL="${{ github.event.inputs.BUILD_ALL }}"
+          BUILD_SCOPE="$BUILD_ALL"
 
           # 解析指定机型清单的 CPU（用于区分 MTK / 高通），返回 CPU 字符串(失败返回空)
           DYNAMIC_REPO_INPUT="${{ github.event.inputs.DYNAMIC_REPO }}"
@@ -329,7 +327,7 @@ jobs:
             return 0
           }
 
-          if [ "${{ github.event.inputs.BUILD_ALL }}" = "true" ]; then
+          if [ "$BUILD_ALL" != "Off" ]; then
             if [ "$BUILD_SCOPE" = "All" ]; then
               echo "🌐 批量构建模式：构建全部 ${#ALL_FILES[@]} 个机型"
               SELECTED=("${ALL_FILES[@]}")
@@ -375,7 +373,7 @@ jobs:
             echo "📦 将创建 Release: $RELEASE_TAG"
 
             # 构建参数信息（不含：仓库所有者 DYNAMIC_REPO / 内核后缀 SUFFIX / 极速构建 FAST_BUILD）
-            if [ "${{ github.event.inputs.BUILD_ALL }}" = "true" ]; then
+            if [ "$BUILD_ALL" != "Off" ]; then
               if [ "$BUILD_SCOPE" = "All" ]; then
                 BUILD_TARGET="全部机型 (${#SELECTED[@]})"
               else
