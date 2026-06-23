@@ -446,6 +446,30 @@ jobs:
           # 传递组合信息
           echo "value=${FILE_BASE}_Android${ANDROID_VERSION}" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve MTK Compatibility
+        run: |
+          # MTK(联发科)机型限制：不支持开启网络功能拓展(NETFILTER)，不支持关闭极速构建(FAST_BUILD)
+          NETFILTER_EFF="${{ github.event.inputs.NETFILTER }}"
+          FAST_BUILD_EFF="${{ github.event.inputs.FAST_BUILD }}"
+          if [[ "$CPU" == mt* ]]; then
+            echo "✅ 检测到 MTK(联发科) 机型: CPU=$CPU"
+            echo "IS_MTK=true" >> "$GITHUB_ENV"
+            if [ "$NETFILTER_EFF" = "true" ]; then
+              echo "::warning title=MTK NETFILTER::MTK 机型不支持网络功能拓展(NETFILTER)，已自动关闭。"
+              NETFILTER_EFF="false"
+            fi
+            if [ "$FAST_BUILD_EFF" = "false" ]; then
+              echo "::warning title=MTK FAST_BUILD::MTK 机型不支持关闭极速构建(FAST_BUILD)，已自动开启。"
+              FAST_BUILD_EFF="true"
+            fi
+          else
+            echo "ℹ️ 非 MTK 机型: CPU=$CPU"
+            echo "IS_MTK=false" >> "$GITHUB_ENV"
+          fi
+          echo "NETFILTER=$NETFILTER_EFF" >> "$GITHUB_ENV"
+          echo "FAST_BUILD=$FAST_BUILD_EFF" >> "$GITHUB_ENV"
+          echo "最终生效: NETFILTER=$NETFILTER_EFF, FAST_BUILD=$FAST_BUILD_EFF"
+
       - name: Debug Show Selected Inputs
         run: |
           echo "------------------------------"
@@ -465,10 +489,10 @@ jobs:
           echo "Custom KSU_META: ${{ github.event.inputs.KSU_META }}"
           echo "Selected ZRAM: ${{ github.event.inputs.ZRAM }}"
           echo "Selected LSM_BBG: ${{ github.event.inputs.LSM_BBG }}"
-          echo "Selected NETFILTER: ${{ github.event.inputs.NETFILTER }}"
+          echo "Selected NETFILTER: ${{ github.event.inputs.NETFILTER }} (生效: ${{ env.NETFILTER }})"
           echo "Selected CCM: ${{ github.event.inputs.CCM }}"
           echo "Selected SUSFS_DEV: ${{ github.event.inputs.SUSFS_DEV }}"
-          echo "Selected FAST_BUILD: ${{ github.event.inputs.FAST_BUILD }}"
+          echo "Selected FAST_BUILD: ${{ github.event.inputs.FAST_BUILD }} (生效: ${{ env.FAST_BUILD }})"
           echo "Selected SCHED_HMBIRD: ${{ github.event.inputs.SCHED_HMBIRD }}"
           echo "Selected UNICODE_BYPASS: ${{ github.event.inputs.UNICODE_BYPASS }}"
           echo "Selected DROID_SPACES: ${{ github.event.inputs.DROID_SPACES }}"
@@ -621,10 +645,10 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ matrix.FILE }}-${{ env.BUILD_METHOD }}-${{ github.event.inputs.FAST_BUILD == 'true' && 'alpha' || 'beta' }}-16.8
+          key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ matrix.FILE }}-${{ env.BUILD_METHOD }}-${{ env.FAST_BUILD == 'true' && 'alpha' || 'beta' }}-16.8
 
       - name: Restore ThinLTO Cache
-        if: ${{ github.event.inputs.BUILD_NOCACHE == 'false' && github.event.inputs.FAST_BUILD == 'true' }}
+        if: ${{ github.event.inputs.BUILD_NOCACHE == 'false' && env.FAST_BUILD == 'true' }}
         id: restore-thinlto
         uses: actions/cache/restore@v5
         with:
@@ -770,7 +794,7 @@ jobs:
         run: |
           cd kernel_workspace/kernel_platform
           SUFFIX="${{ github.event.inputs.SUFFIX }}"
-          FAST_BUILD="${{ github.event.inputs.FAST_BUILD }}"
+          FAST_BUILD="${{ env.FAST_BUILD }}"
 
           for f in ./common/scripts/setlocalversion ./"$KERNEL_REPOS"/scripts/setlocalversion ./external/dtc/scripts/setlocalversion; do
             [ -f "$f" ] || continue
@@ -808,7 +832,7 @@ jobs:
         if: ${{ github.event.inputs.SUFFIX == '' }}
         run: |
           cd kernel_workspace/kernel_platform
-          FAST_BUILD="${{ github.event.inputs.FAST_BUILD }}"
+          FAST_BUILD="${{ env.FAST_BUILD }}"
 
           # 生成随机数字和随机hash
           RANDOM_DIGIT=$(od -An -N1 -tu1 < /dev/urandom | tr -d '[:space:]' | awk '{print $1 % 11}')
@@ -1393,7 +1417,7 @@ jobs:
           fi
 
           # IPSET & IPv6_NAT配置*
-          if [ "${{ github.event.inputs.NETFILTER }}" = "true" ]; then
+          if [ "${{ env.NETFILTER }}" = "true" ]; then
             if [[ "$KERNEL_VERSION" != "6.12" && "${CPU}" != mt* ]]; then
               set_config "CONFIG_BPF_STREAM_PARSER=y"
             fi
@@ -1428,7 +1452,7 @@ jobs:
           fi
 
       - name: Fix IPv6_NAT Error
-        if: ${{ github.event.inputs.NETFILTER == 'true' }}
+        if: ${{ env.NETFILTER == 'true' }}
         run: |
           PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
           cd kernel_workspace/kernel_platform/common
@@ -1473,7 +1497,7 @@ jobs:
           sed -i '/obj-y.*gpueb/d' kernel_workspace/kernel-5.10/drivers/gpu/mediatek/Makefile
 
       - name: Build Kernel FAST
-        if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
+        if: ${{ env.FAST_BUILD == 'true' }}
         id: fast_build
         run: |
           KERNEL_VERSION="${{ env.KERNEL_VERSION }}"
@@ -1674,7 +1698,7 @@ jobs:
           ccache -s
 
       - name: Fallback to Build Kernel
-        if: ${{ github.event.inputs.FAST_BUILD == 'false' || steps.fast_build.outputs.fallback == 'true' }}
+        if: ${{ env.FAST_BUILD == 'false' || steps.fast_build.outputs.fallback == 'true' }}
         run: |
           cd kernel_workspace
           if [ -f ./kernel_platform/build_with_bazel.py ]; then
@@ -1906,10 +1930,10 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ matrix.FILE }}-${{ env.BUILD_METHOD }}-${{ github.event.inputs.FAST_BUILD == 'true' && 'alpha' || 'beta' }}-16.8
+          key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ matrix.FILE }}-${{ env.BUILD_METHOD }}-${{ env.FAST_BUILD == 'true' && 'alpha' || 'beta' }}-16.8
 
       - name: Save ThinLTO Cache
-        if: ${{ github.event.inputs.BUILD_NOCACHE == 'false' && github.event.inputs.FAST_BUILD == 'true' && steps.cache_size_check.outputs.thinlto_save == 'true' && steps.restore-thinlto.outputs.cache-hit != 'true' }}
+        if: ${{ github.event.inputs.BUILD_NOCACHE == 'false' && env.FAST_BUILD == 'true' && steps.cache_size_check.outputs.thinlto_save == 'true' && steps.restore-thinlto.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v5
         with:
           path: ${{ github.workspace }}/kernel_workspace/.thinlto-cache
