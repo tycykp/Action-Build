@@ -652,24 +652,10 @@ jobs:
           chmod +x /tmp/check_rejects.sh
           echo "REJ_CHECKER=/tmp/check_rejects.sh" >> $GITHUB_ENV
 
-      - name: Restore APT Cache
-        id: apt-cache
-        uses: actions/cache@v5
-        with:
-          path: ~/apt-cache-debs
-          key: apt-cache-${{ runner.os }}-${{ github.ref_name }}-v3
-
       - name: Install Dependencies
         run: |
-          mkdir -p ~/apt-cache-debs
-          if [ "${{ steps.apt-cache.outputs.cache-hit }}" != "true" ]; then
-            sudo apt-get update
-          else
-            echo "✅ APT 缓存命中，跳过 apt-get update"
-          fi
-          sudo apt-get install -y --no-install-recommends -o Dir::Cache::Archives="$HOME/apt-cache-debs" python3 git curl libelf-dev build-essential flex bison libssl-dev libncurses-dev liblz4-tool zlib1g-dev libxml2-utils rsync unzip gawk dos2unix kmod libdw-dev elfutils dwarves
-          sudo rm -f ~/apt-cache-debs/lock
-          sudo rm -rf ~/apt-cache-debs/partial
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3 git curl libelf-dev build-essential flex bison libssl-dev libncurses-dev liblz4-tool zlib1g-dev libxml2-utils rsync unzip gawk dos2unix kmod libdw-dev elfutils dwarves
 
       - name: Install Ccache-ECS
         run: |
@@ -728,6 +714,24 @@ jobs:
 
           echo "使用$MANIFEST_REPO/$MANIFEST_REPO_NAME($MANIFEST_BRANCH)初始化仓库..."
           repo init -u "$BASE_URL" -b "$MANIFEST_BRANCH" -m "${FILE}.xml" --depth=1 --no-clone-bundle --no-tags
+
+          # 移除会导致同步失败的可选测试/工具链项目（其远端分支常已缺失，且内核构建不需要）
+          EXCLUDE_PATTERNS=(
+            "prebuilts/asuite"
+            "tools/tradefederation/prebuilts"
+          )
+          shopt -s nullglob globstar
+          for mf in .repo/manifests/**/*.xml; do
+            for p in "${EXCLUDE_PATTERNS[@]}"; do
+              for attr in path name; do
+                perl -0777 -i -pe "s{<project\\b[^>]*\\b$attr=\"[^\"]*\\Q$p\\E\"[^>]*/>\\s*}{}g" "$mf"
+                perl -0777 -i -pe "s{<project\\b[^>]*\\b$attr=\"[^\"]*\\Q$p\\E\"[^>]*>.*?</project>\\s*}{}gs" "$mf"
+              done
+            done
+          done
+          shopt -u globstar
+          echo "已从清单中移除可选项目: ${EXCLUDE_PATTERNS[*]}"
+
           repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync
 
           KERNEL_REPOS=""
