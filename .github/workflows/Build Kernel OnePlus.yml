@@ -106,7 +106,7 @@ on:
         type: string
         description: "动态清单仓库所有者"
         required: true
-        default: "Numbersf"
+        default: "tycykp"
       BUILD_TIME:
         type: string
         description: "自定义构建时间(输入F使用UTCT或-1关闭)"
@@ -116,7 +116,7 @@ on:
         type: string
         description: "分支名(必填)/自定义版本标识(留空不修改)/回退分支提交哈希版本(留空不修改)"
         required: false
-        default: "builtin/Numbersf/"
+        default: "builtin/tycykp/"
       LZ4_UPDATE:
         type: boolean
         description: "是否升级LZ4到上游最新？"
@@ -299,10 +299,47 @@ jobs:
           if [ "${{ github.event.inputs.RELEASE }}" = "true" ]; then
             RELEASE_TAG="Kernel_Build_$(date -u +%Y%m%d_%H%M%S)_${{ github.run_id }}"
             echo "📦 将创建 Release: $RELEASE_TAG"
+
+            # 构建参数信息（不含：仓库所有者 DYNAMIC_REPO / 内核后缀 SUFFIX / 极速构建 FAST_BUILD）
+            if [ "${{ github.event.inputs.BUILD_ALL }}" = "true" ]; then
+              BUILD_TARGET="全部机型 (${#ALL_FILES[@]})"
+            else
+              BUILD_TARGET="${{ github.event.inputs.FILE }}"
+            fi
+            NOTES_FILE="$(mktemp)"
+            {
+              echo "自动构建产物，构建于 $(date -u '+%Y-%m-%d %H:%M:%S UTC')。"
+              echo ""
+              echo "## 构建参数信息"
+              echo ""
+              echo "| 参数 | 取值 |"
+              echo "| --- | --- |"
+              echo "| 构建目标 | ${BUILD_TARGET} |"
+              echo "| 管理器调用方向 (MANAGER_SOURCE) | ${{ github.event.inputs.MANAGER_SOURCE }} |"
+              echo "| SUSFS模块下载 (SUSFS_CI) | ${{ github.event.inputs.SUSFS_CI }} |"
+              echo "| 内核模块实现 (KPM) | ${{ github.event.inputs.KPM }} |"
+              echo "| 回退SUSFS (SUSFS_META) | ${{ github.event.inputs.SUSFS_META }} |"
+              echo "| 自定义构建时间 (BUILD_TIME) | ${{ github.event.inputs.BUILD_TIME }} |"
+              echo "| 分支/版本标识 (KSU_META) | ${{ github.event.inputs.KSU_META }} |"
+              echo "| 升级LZ4 (LZ4_UPDATE) | ${{ github.event.inputs.LZ4_UPDATE }} |"
+              echo "| ZRAM | ${{ github.event.inputs.ZRAM }} |"
+              echo "| 内核等级欺骗 (SUBLEVEL) | ${{ github.event.inputs.SUBLEVEL }} |"
+              echo "| 关键分区写入保护 (LSM_BBG) | ${{ github.event.inputs.LSM_BBG }} |"
+              echo "| 网络功能拓展 (NETFILTER) | ${{ github.event.inputs.NETFILTER }} |"
+              echo "| 网络拥塞控制 (CCM) | ${{ github.event.inputs.CCM }} |"
+              echo "| Unicode绕过修复 (UNICODE_BYPASS) | ${{ github.event.inputs.UNICODE_BYPASS }} |"
+              echo "| 风驰驱动 (SCHED_HMBIRD) | ${{ github.event.inputs.SCHED_HMBIRD }} |"
+              echo "| 轻量级容器 (DROID_SPACES) | ${{ github.event.inputs.DROID_SPACES }} |"
+              echo "| Re-Kernel (RE_KERNEL) | ${{ github.event.inputs.RE_KERNEL }} |"
+              echo "| SUSFS-DEV分支 (SUSFS_DEV) | ${{ github.event.inputs.SUSFS_DEV }} |"
+              echo ""
+              echo "> 注：MTK(联发科)机型不支持网络功能拓展(NETFILTER)，且强制开启极速构建，最终生效值以各机型构建日志为准。"
+            } > "$NOTES_FILE"
+
             gh release create "$RELEASE_TAG" \
               --repo "${{ github.repository }}" \
               --title "OnePlus Kernels ($RELEASE_TAG)" \
-              --notes "自动批量构建产物，构建于 $(date -u '+%Y-%m-%d %H:%M:%S UTC')。" \
+              --notes-file "$NOTES_FILE" \
               || echo "⚠️ Release 可能已存在，继续。"
           fi
           echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
