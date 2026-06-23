@@ -196,6 +196,15 @@ on:
         description: "是否批量构建所有机型？(忽略上方FILE选择)"
         required: true
         default: false
+      BUILD_SCOPE:
+        type: choice
+        description: "批量构建范围(仅BUILD_ALL=true时生效)"
+        required: true
+        default: All
+        options:
+          - All
+          - MTK
+          - Qualcomm
       RELEASE:
         type: boolean
         description: "是否将构建产物发布到 Release？"
@@ -284,9 +293,74 @@ jobs:
             oneplus_ace6_ultra_Canary
           )
 
+          BUILD_SCOPE="${{ github.event.inputs.BUILD_SCOPE }}"
+
+          # 解析指定机型清单的 CPU（用于区分 MTK / 高通），返回 CPU 字符串(失败返回空)
+          DYNAMIC_REPO_INPUT="${{ github.event.inputs.DYNAMIC_REPO }}"
+          REPO_LIST=(
+            "OnePlusOSS|kernel_manifest"
+            "${DYNAMIC_REPO_INPUT}|kernel_manifest"
+            "Numbersf|Kernel_Manifest_Appendix"
+          )
+          declare -A BRANCHES_CACHE
+          resolve_cpu() {
+            local FILE="$1"
+            local ENTRY OWNER REPO_NAME BRANCHES BRANCH XML_URL REVISION CPU
+            for ENTRY in "${REPO_LIST[@]}"; do
+              OWNER="${ENTRY%%|*}"
+              REPO_NAME="${ENTRY##*|}"
+              [[ -z "$OWNER" ]] && continue
+              if [[ -z "${BRANCHES_CACHE[$OWNER/$REPO_NAME]+x}" ]]; then
+                BRANCHES_CACHE[$OWNER/$REPO_NAME]=$(git ls-remote --heads "https://github.com/${OWNER}/${REPO_NAME}.git" 2>/dev/null | sed 's|.*refs/heads/||')
+              fi
+              BRANCHES="${BRANCHES_CACHE[$OWNER/$REPO_NAME]}"
+              [[ -z "$BRANCHES" ]] && continue
+              for BRANCH in $BRANCHES; do
+                XML_URL="https://raw.githubusercontent.com/${OWNER}/${REPO_NAME}/${BRANCH}/${FILE}.xml"
+                REVISION=$(curl -sf "$XML_URL" 2>/dev/null | grep -oP '<project[^>]+revision="\K[^"]+' | head -n1 || true)
+                if [[ -n "$REVISION" ]]; then
+                  CPU=$(echo "$REVISION" | sed -E 's#^(oneplus|realme|oppo)/([^_]+).*#\2#')
+                  echo "$CPU"
+                  return 0
+                fi
+              done
+            done
+            echo ""
+            return 0
+          }
+
           if [ "${{ github.event.inputs.BUILD_ALL }}" = "true" ]; then
-            echo "🌐 批量构建模式：构建全部 ${#ALL_FILES[@]} 个机型"
-            MATRIX=$(printf '%s\n' "${ALL_FILES[@]}" | jq -R . | jq -cs .)
+            if [ "$BUILD_SCOPE" = "All" ]; then
+              echo "🌐 批量构建模式：构建全部 ${#ALL_FILES[@]} 个机型"
+              SELECTED=("${ALL_FILES[@]}")
+            else
+              echo "🌐 批量构建模式：按厂商筛选 ($BUILD_SCOPE)，正在解析各机型 CPU..."
+              SELECTED=()
+              for f in "${ALL_FILES[@]}"; do
+                CPU=$(resolve_cpu "$f")
+                if [[ -z "$CPU" ]]; then
+                  echo "⚠️ 无法解析 $f 的 CPU，已跳过"
+                  continue
+                fi
+                if [[ "$CPU" == mt* ]]; then
+                  VENDOR="MTK"
+                else
+                  VENDOR="Qualcomm"
+                fi
+                if [ "$VENDOR" = "$BUILD_SCOPE" ]; then
+                  echo "✅ $f (CPU=$CPU) -> $VENDOR [选中]"
+                  SELECTED+=("$f")
+                else
+                  echo "➖ $f (CPU=$CPU) -> $VENDOR [跳过]"
+                fi
+              done
+            fi
+            if [ "${#SELECTED[@]}" -eq 0 ]; then
+              echo "❌ 按范围 $BUILD_SCOPE 筛选后没有任何机型可构建"
+              exit 1
+            fi
+            echo "本次构建 ${#SELECTED[@]} 个机型"
+            MATRIX=$(printf '%s\n' "${SELECTED[@]}" | jq -R . | jq -cs .)
           else
             echo "🎯 单机型构建模式：${{ github.event.inputs.FILE }}"
             MATRIX=$(jq -cn --arg f "${{ github.event.inputs.FILE }}" '[$f]')
@@ -302,7 +376,11 @@ jobs:
 
             # 构建参数信息（不含：仓库所有者 DYNAMIC_REPO / 内核后缀 SUFFIX / 极速构建 FAST_BUILD）
             if [ "${{ github.event.inputs.BUILD_ALL }}" = "true" ]; then
-              BUILD_TARGET="全部机型 (${#ALL_FILES[@]})"
+              if [ "$BUILD_SCOPE" = "All" ]; then
+                BUILD_TARGET="全部机型 (${#SELECTED[@]})"
+              else
+                BUILD_TARGET="${BUILD_SCOPE} 机型 (${#SELECTED[@]})"
+              fi
             else
               BUILD_TARGET="${{ github.event.inputs.FILE }}"
             fi
@@ -1637,10 +1715,17 @@ jobs:
           fi
 
           # PAHOLE 检测与 fallback
+          # 优先使用源码自带的 prebuilt pahole（与内核 DWARF/BTF 匹配），避免使用系统 pahole
+          # 导致 BTF 生成异常（.btf.vmlinux.bin.o: unknown file type）
           PAHOLE_BIN="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$KERNEL_BUILD_TOOLS_PREBUILT_NAME/kernel-build-tools/linux-x86/bin/pahole"
           if [ ! -x "$PAHOLE_BIN" ]; then
+            echo "⚠️ 默认路径未找到 prebuilt pahole，正在全局搜索 kernel-build-tools..."
+            PAHOLE_BIN="$(find "$GITHUB_WORKSPACE/kernel_workspace" -type f -path '*/kernel-build-tools/linux-x86/bin/pahole' 2>/dev/null | head -n1)"
+            [ -x "$PAHOLE_BIN" ] && echo "✅ 全局搜索到 prebuilt pahole: $PAHOLE_BIN"
+          fi
+          if [ ! -x "$PAHOLE_BIN" ]; then
             PAHOLE_BIN="$(which pahole 2>/dev/null)"
-            [ -x "$PAHOLE_BIN" ] && echo "⚠️ pahole fallback to PATH: $PAHOLE_BIN"
+            [ -x "$PAHOLE_BIN" ] && echo "⚠️ pahole fallback to PATH(系统版本，可能导致 BTF 生成异常): $PAHOLE_BIN"
           fi
           if [ -x "$PAHOLE_BIN" ]; then
             echo "✅ pahole exists: $PAHOLE_BIN"
