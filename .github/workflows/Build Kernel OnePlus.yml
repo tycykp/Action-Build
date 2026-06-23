@@ -409,7 +409,7 @@ jobs:
               echo "| Re-Kernel (RE_KERNEL) | ${{ github.event.inputs.RE_KERNEL }} |"
               echo "| SUSFS-DEV分支 (SUSFS_DEV) | ${{ github.event.inputs.SUSFS_DEV }} |"
               echo ""
-              echo "> 注：MTK(联发科)机型不支持网络功能拓展(NETFILTER)，且强制开启极速构建，最终生效值以各机型构建日志为准。"
+              echo "> 注：MTK(联发科)机型不支持网络功能拓展(NETFILTER)，最终生效值以各机型构建日志为准。"
             } > "$NOTES_FILE"
 
             gh release create "$RELEASE_TAG" \
@@ -561,7 +561,7 @@ jobs:
 
       - name: Resolve MTK Compatibility
         run: |
-          # MTK(联发科)机型限制：不支持开启网络功能拓展(NETFILTER)，不支持关闭极速构建(FAST_BUILD)
+          # MTK(联发科)机型限制：不支持开启网络功能拓展(NETFILTER)
           NETFILTER_EFF="${{ github.event.inputs.NETFILTER }}"
           FAST_BUILD_EFF="${{ github.event.inputs.FAST_BUILD }}"
           if [[ "$CPU" == mt* ]]; then
@@ -570,10 +570,6 @@ jobs:
             if [ "$NETFILTER_EFF" = "true" ]; then
               echo "::warning title=MTK NETFILTER::MTK 机型不支持网络功能拓展(NETFILTER)，已自动关闭。"
               NETFILTER_EFF="false"
-            fi
-            if [ "$FAST_BUILD_EFF" = "false" ]; then
-              echo "::warning title=MTK FAST_BUILD::MTK 机型不支持关闭极速构建(FAST_BUILD)，已自动开启。"
-              FAST_BUILD_EFF="true"
             fi
           else
             echo "ℹ️ 非 MTK 机型: CPU=$CPU"
