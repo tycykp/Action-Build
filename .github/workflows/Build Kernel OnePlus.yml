@@ -191,11 +191,130 @@ on:
         description: "是否停用此次缓存？"
         required: true
         default: false
+      BUILD_ALL:
+        type: boolean
+        description: "是否批量构建所有机型？(忽略上方FILE选择)"
+        required: true
+        default: false
+      RELEASE:
+        type: boolean
+        description: "是否将构建产物发布到 Release？"
+        required: true
+        default: false
+
+permissions:
+  contents: write
 
 jobs:
-  build:
-    name: ${{ github.event.inputs.FAST_BUILD == 'true' && ' [FAST]' || '' }}${{ contains(github.event.inputs.FILE, '_aosp') && ' [AOSP]' || '' }}${{ github.event.inputs.KPM == 'KPM' && ' [KPM]' || github.event.inputs.KPM == 'KPN' && ' [KPN]' || '' }}${{ github.event.inputs.LSM_BBG == 'true' && ' [BBG]' || '' }}${{ github.event.inputs.SCHED_HMBIRD == 'true' && ' [HMBIRD]' || '' }}${{ github.event.inputs.DROID_SPACES == 'true' && ' [DS]' || '' }}${{ startsWith(github.event.inputs.ZRAM, '1/') && ' [ZRAM]' || '' }}${{ github.event.inputs.RE_KERNEL == 'true' && ' [REKER]' || '' }}${{ github.event.inputs.LZ4_UPDATE == 'true' && ' [LZ4UPD]' || '' }}For ${{ github.event.inputs.FILE }} ${{ github.event.inputs.SUFFIX }}
+  prepare:
+    name: Prepare Matrix & Release
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+      release_tag: ${{ steps.set.outputs.release_tag }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Generate Build Matrix
+        id: set
+        run: |
+          set -e
+          # 所有可批量构建的机型清单（与上方 FILE 选项保持一致）
+          ALL_FILES=(
+            oneplus_nord_n30_se_5g_v
+            oneplus_10r_v
+            oneplus_nord_3_v
+            oneplus_ace_v
+            oneplus_ace_race_v
+            oneplus_10_pro_b
+            oneplus_10t_v
+            oneplus_11r_b
+            oneplus_ace2_b
+            oneplus_pad_lite_b
+            oneplus_pad_lite_Canary_b
+            oneplus_pad_mt6983_b
+            oneplus_ace_2v_b
+            oneplus_ace_pro_v
+            oneplus_11_b
+            oneplus_12r_b
+            oneplus_ace2_pro_b
+            oneplus_ace3_b
+            oneplus_open_b
+            oneplus_nord_ce4_b
+            oneplus_12_b
+            oneplus_pad_go_2_b
+            oneplus_nord_ce4_lite_5g_b
+            oneplus_nord_ce6_lite_b
+            oneplus_turbo_6v
+            oneplus_nord_4_b
+            oneplus_ace_3v_b
+            oneplus_pad_mt6897_b
+            oneplus_13r_b
+            oneplus_ace3_pro_b
+            oneplus_ace5_b
+            oneplus_pad_pro_b
+            oneplus_pad2_b
+            oneplus_nord_ce5_b
+            oneplus_nord_5_b
+            oneplus_ace5_pro_b
+            oneplus_13_b
+            oneplus_13t_b
+            oneplus_13s_b
+            oneplus_pad_2_pro_b
+            oneplus_pad_3_b
+            oneplus_ace5_race_b
+            oneplus_ace5_ultra_b
+            oneplus_pad2_mt6991_b
+            oneplus_ace_6
+            oneplus_turbo_6
+            oneplus_nord_6
+            oneplus_ace_6t
+            oneplus_ace_6t_Canary
+            oneplus_15r
+            oneplus_15r_Canary
+            oneplus_15
+            oneplus_15_Canary
+            oneplus_15t
+            oneplus_15t_Canary
+            oneplus_pad_3_pro
+            oneplus_pad_3_pro_Canary
+            oneplus_pad_4
+            oneplus_pad_4_Canary
+            oneplus_ace6_ultra
+            oneplus_ace6_ultra_Canary
+          )
+
+          if [ "${{ github.event.inputs.BUILD_ALL }}" = "true" ]; then
+            echo "🌐 批量构建模式：构建全部 ${#ALL_FILES[@]} 个机型"
+            MATRIX=$(printf '%s\n' "${ALL_FILES[@]}" | jq -R . | jq -cs .)
+          else
+            echo "🎯 单机型构建模式：${{ github.event.inputs.FILE }}"
+            MATRIX=$(jq -cn --arg f "${{ github.event.inputs.FILE }}" '[$f]')
+          fi
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "构建矩阵: $MATRIX"
+
+          # 发布 Release 时预先创建发行版，避免并发竞争
+          RELEASE_TAG=""
+          if [ "${{ github.event.inputs.RELEASE }}" = "true" ]; then
+            RELEASE_TAG="Kernel_Build_$(date -u +%Y%m%d_%H%M%S)_${{ github.run_id }}"
+            echo "📦 将创建 Release: $RELEASE_TAG"
+            gh release create "$RELEASE_TAG" \
+              --repo "${{ github.repository }}" \
+              --title "OnePlus Kernels ($RELEASE_TAG)" \
+              --notes "自动批量构建产物，构建于 $(date -u '+%Y-%m-%d %H:%M:%S UTC')。" \
+              || echo "⚠️ Release 可能已存在，继续。"
+          fi
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    name: ${{ github.event.inputs.FAST_BUILD == 'true' && ' [FAST]' || '' }}${{ contains(matrix.FILE, '_aosp') && ' [AOSP]' || '' }}${{ github.event.inputs.KPM == 'KPM' && ' [KPM]' || github.event.inputs.KPM == 'KPN' && ' [KPN]' || '' }}${{ github.event.inputs.LSM_BBG == 'true' && ' [BBG]' || '' }}${{ github.event.inputs.SCHED_HMBIRD == 'true' && ' [HMBIRD]' || '' }}${{ github.event.inputs.DROID_SPACES == 'true' && ' [DS]' || '' }}${{ startsWith(github.event.inputs.ZRAM, '1/') && ' [ZRAM]' || '' }}${{ github.event.inputs.RE_KERNEL == 'true' && ' [REKER]' || '' }}${{ github.event.inputs.LZ4_UPDATE == 'true' && ' [LZ4UPD]' || '' }}For ${{ matrix.FILE }} ${{ github.event.inputs.SUFFIX }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        FILE: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     env:
       CCACHE_COMPILERCHECK: "none"
       CCACHE_NOHASHDIR: "true"
@@ -220,7 +339,7 @@ jobs:
       - name: Extract Manifest Info
         id: extract_info
         env:
-          FILE: ${{ github.event.inputs.FILE }}
+          FILE: ${{ matrix.FILE }}
         run: |
           set -e
           cd "$GITHUB_WORKSPACE"
@@ -335,7 +454,7 @@ jobs:
           echo "Selected CPUD: ${{ env.CPUD }}"
           echo "Selected ANDROID_VERSION: ${{ env.ANDROID_VERSION }}"
           echo "Selected BUILD_METHOD: ${{ env.BUILD_METHOD }}"
-          echo "Selected FILE: ${{ github.event.inputs.FILE }}"
+          echo "Selected FILE: ${{ matrix.FILE }}"
           echo "Selected MANAGER_SOURCE: ${{ github.event.inputs.MANAGER_SOURCE }}"
           echo "Selected SUSFS_CI: ${{ github.event.inputs.SUSFS_CI }}"
           if [ "${{ github.event.inputs.SUSFS_CI }}" != "N/A" ]; then
@@ -432,9 +551,9 @@ jobs:
       - name: Set Cache Environment
         if: ${{ github.event.inputs.BUILD_NOCACHE == 'false' }}
         run: |
-          echo "CCACHE_DIR=$HOME/.ccache_${{ github.event.inputs.FILE }}" >> $GITHUB_ENV
-          mkdir -p "$HOME/.ccache_${{ github.event.inputs.FILE }}"
-          echo "set: $HOME/.ccache_${{ github.event.inputs.FILE }}"
+          echo "CCACHE_DIR=$HOME/.ccache_${{ matrix.FILE }}" >> $GITHUB_ENV
+          mkdir -p "$HOME/.ccache_${{ matrix.FILE }}"
+          echo "set: $HOME/.ccache_${{ matrix.FILE }}"
 
       - name: Configure Git
         run: |
@@ -502,7 +621,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ github.event.inputs.FILE }}-${{ env.BUILD_METHOD }}-${{ github.event.inputs.FAST_BUILD == 'true' && 'alpha' || 'beta' }}-16.8
+          key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ matrix.FILE }}-${{ env.BUILD_METHOD }}-${{ github.event.inputs.FAST_BUILD == 'true' && 'alpha' || 'beta' }}-16.8
 
       - name: Restore ThinLTO Cache
         if: ${{ github.event.inputs.BUILD_NOCACHE == 'false' && github.event.inputs.FAST_BUILD == 'true' }}
@@ -510,7 +629,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/kernel_workspace/.thinlto-cache
-          key: thinlto-${{ runner.os }}-${{ github.ref_name }}-${{ github.event.inputs.FILE }}-16.8
+          key: thinlto-${{ runner.os }}-${{ github.ref_name }}-${{ matrix.FILE }}-16.8
 
       - name: Initialize Ccache
         if: ${{ github.event.inputs.BUILD_NOCACHE == 'false' }}
@@ -539,7 +658,7 @@ jobs:
 
       - name: Initialize Repo and Sync
         env:
-          FILE: ${{ github.event.inputs.FILE }}
+          FILE: ${{ matrix.FILE }}
         run: |
           cd kernel_workspace
           mkdir -p .repo/manifests
@@ -832,7 +951,7 @@ jobs:
 
       - name: Apply Patches SukiSU Ultra
         env:
-          FILE: ${{ github.event.inputs.FILE }}
+          FILE: ${{ matrix.FILE }}
         run: |
           cd kernel_workspace
           if [ "${{ github.event.inputs.SUSFS_META }}" != "-1" ]; then
@@ -1045,7 +1164,7 @@ jobs:
 
       - name: Apply DROID_SPACES
         env:
-          FILE: ${{ github.event.inputs.FILE }}
+          FILE: ${{ matrix.FILE }}
         if: ${{ github.event.inputs.DROID_SPACES == 'true' }}
         run: |
           PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
@@ -1139,7 +1258,7 @@ jobs:
 
       - name: Apply SCHED_HMBIRD
         env:
-          FILE: ${{ github.event.inputs.FILE }}
+          FILE: ${{ matrix.FILE }}
         if: ${{ github.event.inputs.SCHED_HMBIRD == 'true' }}
         run: |
           cd kernel_workspace/kernel_platform/common
@@ -1568,7 +1687,7 @@ jobs:
 
       - name: Make AnyKernel3
         run: |
-          git clone https://github.com/Numbersf/AnyKernel3 --depth=1
+          git clone https://github.com/tycykp/AnyKernel3 --depth=1
           rm -rf ./AnyKernel3/.git
           mkdir -p kernel_workspace/kernel_platform/out/Final-Image-Find/
           image_path=""
@@ -1679,6 +1798,26 @@ jobs:
           name: AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}(${{ env.TKERNEL_VERSION }})${{ steps.suffix.outputs.value }}
           path: ./AnyKernel3/*
 
+      - name: Package AnyKernel3 Zip for Release
+        if: ${{ github.event.inputs.RELEASE == 'true' }}
+        id: pack
+        run: |
+          ZIP_NAME="AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}(${{ env.TKERNEL_VERSION }})${{ steps.suffix.outputs.value }}.zip"
+          mkdir -p "${GITHUB_WORKSPACE}/release_assets"
+          ( cd ./AnyKernel3 && zip -r9 "${GITHUB_WORKSPACE}/release_assets/${ZIP_NAME}" ./* )
+          echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+          echo "✅ 已打包: $ZIP_NAME"
+
+      - name: Publish to Release
+        if: ${{ github.event.inputs.RELEASE == 'true' && needs.prepare.outputs.release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ needs.prepare.outputs.release_tag }}" \
+            "${GITHUB_WORKSPACE}/release_assets/${{ steps.pack.outputs.zip_name }}" \
+            --repo "${{ github.repository }}" --clobber
+          echo "✅ 已发布到 Release: ${{ needs.prepare.outputs.release_tag }}"
+
       - name: Extract and Process ZRAM Module
         if: startsWith(github.event.inputs.ZRAM, '1/')
         id: zram_find
@@ -1767,14 +1906,14 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ github.event.inputs.FILE }}-${{ env.BUILD_METHOD }}-${{ github.event.inputs.FAST_BUILD == 'true' && 'alpha' || 'beta' }}-16.8
+          key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ matrix.FILE }}-${{ env.BUILD_METHOD }}-${{ github.event.inputs.FAST_BUILD == 'true' && 'alpha' || 'beta' }}-16.8
 
       - name: Save ThinLTO Cache
         if: ${{ github.event.inputs.BUILD_NOCACHE == 'false' && github.event.inputs.FAST_BUILD == 'true' && steps.cache_size_check.outputs.thinlto_save == 'true' && steps.restore-thinlto.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v5
         with:
           path: ${{ github.workspace }}/kernel_workspace/.thinlto-cache
-          key: thinlto-${{ runner.os }}-${{ github.ref_name }}-${{ github.event.inputs.FILE }}-16.8
+          key: thinlto-${{ runner.os }}-${{ github.ref_name }}-${{ matrix.FILE }}-16.8
 
       - name: Post-build Disk Check
         run: df -h
