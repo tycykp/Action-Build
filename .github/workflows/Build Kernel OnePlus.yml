@@ -905,6 +905,34 @@ jobs:
             echo "ENABLE_RUST=false" >> $GITHUB_ENV
           fi
 
+      # 修复较新版本 pahole(>=1.24) 生成 BTF_KIND_ENUM64 导致内核 BTF 加载失败
+      # 症状: pahole: .tmp_vmlinux.btf: Invalid argument / ld.lld: .btf.vmlinux.bin.o: unknown file type
+      - name: Fix BTF pahole-flags
+        run: |
+          cd kernel_workspace/kernel_platform
+          patched_any=0
+          for f in ./common/scripts/pahole-flags.sh ./"$KERNEL_REPOS"/scripts/pahole-flags.sh; do
+            [ -f "$f" ] || continue
+            if grep -q 'skip_encoding_btf_enum64' "$f"; then
+              echo "ℹ️ $f 已包含 enum64 跳过逻辑"
+              patched_any=1
+              continue
+            fi
+            if grep -q 'echo ${extra_paholeopt}' "$f"; then
+              echo "正在修补 $f：为 pahole>=124 添加 --skip_encoding_btf_enum64"
+              perl -0777 -i -pe 's/(echo \$\{extra_paholeopt\})/if [ "\$\{pahole_ver\}" -ge "124" ]; then\n\textra_paholeopt="\$\{extra_paholeopt\} --skip_encoding_btf_enum64"\nfi\n\n$1/' "$f"
+              patched_any=1
+            else
+              echo "⚠️ $f 结构异常，未找到 echo \${extra_paholeopt}，跳过"
+            fi
+            echo "::group::修补后的 $f"
+            cat "$f"
+            echo "::endgroup::"
+          done
+          if [ "$patched_any" = "0" ]; then
+            echo "⚠️ 未找到 pahole-flags.sh，可能为非常规结构，忽略"
+          fi
+
       # 自定义内核后缀
       - name: Custom Kernel Suffix if set
         if: ${{ github.event.inputs.SUFFIX != '' && github.event.inputs.SUFFIX != '-1' }}
